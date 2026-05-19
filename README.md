@@ -85,3 +85,68 @@ Modifikasi dilakukan di dua tempat. Pertama, di [src/bin/server.rs](src/bin/serv
 ### Penjelasan
 
 YewChat adalah aplikasi chat berbasis WebAssembly yang dibangun menggunakan framework Yew di Rust. Aplikasi ini terdiri dari dua komponen utama: halaman Login dan halaman Chat. Pada halaman Login, pengguna mengetikkan username (minimal 2 karakter) lalu menekan tombol Connect yang akan menyimpan username ke dalam global Context bertipe `Rc<UserInner>` menggunakan `RefCell` untuk interior mutability, kemudian me-route browser ke halaman Chat melalui `yew-router`. Di halaman Chat, komponen `Chat` langsung menginisialisasi `WebsocketService` yang membuka koneksi WebSocket ke `ws://127.0.0.1:8080` dan mengirim pesan registrasi berformat JSON `{"messageType":"register","data":"username"}` ke server. Komunikasi antara `WebsocketService` dan komponen `Chat` menggunakan dua mekanisme berbeda: pesan dari komponen ke server dikirim melalui MPSC channel (`futures::channel::mpsc`), sedangkan pesan dari server ke komponen diteruskan melalui `EventBus` yang merupakan Yew Agent berbasis `yew_agent`. Ketika server membalas dengan daftar pengguna bertipe `{"messageType":"users","dataArray":[...]}`, komponen memperbarui daftar user di panel kiri beserta avatar yang di-generate dari DiceBear API. Pesan chat dikirim sebagai JSON `{"messageType":"message","data":"teks"}` dan ditampilkan di panel tengah lengkap dengan avatar dan nama pengirim.
+
+---
+
+## Experiment 3.2: Be Creative!
+
+**Login Page (RustChat):**
+
+![RustChat Login Creative](assets/YClogin2.png)
+
+**Chat Page (RustChat):**
+
+![RustChat Chat Creative](assets/YCchat2.png)
+
+### Apa yang diubah?
+
+Saya me-*rebrand* YewChat menjadi **RustChat** dengan desain yang lebih modern dan personal. Berikut perubahan yang dibuat:
+
+#### 🎨 Visual Overhaul
+
+**Login page** sebelumnya hanya kotak input sederhana di latar abu-abu gelap. Saya mengubahnya menjadi:
+- Logo **🦀** (crab Ferris, maskot Rust) yang besar sebagai identitas visual
+- Nama **RustChat** dengan tagline *"Real-time chat — compiled to WebAssembly"* untuk menekankan aspek teknis yang keren
+- Input dengan border yang menyala oranye saat fokus (`focus:border-orange-500`)
+- Hint dinamis: tampilkan *"2 more characters needed"* saat input kurang, berubah jadi *"✓ 5 characters — looking good!"* saat cukup
+- Tombol **"🚀 Launch into Chat"** yang disabled dan abu-abu saat username belum cukup, berubah oranye saat siap
+- Kutipan dari Rust Book di bagian bawah sebagai *easter egg* bagi programmer
+
+**Chat page** berubah dari desain terang abu-abu menjadi full **dark theme** dengan palet abu-abu gelap dan aksen oranye (warna ikonik komunitas Rust):
+- Header sidebar menampilkan logo + nama app + jumlah user online secara real-time
+- Setiap user di sidebar memiliki **green dot** indikator online (menggunakan `border-2 border-gray-800` agar dot terlihat bersih di atas avatar)
+- Bagian bawah sidebar menampilkan tip: *"send a .gif URL to share an animation!"*
+- Header chat area menampilkan **jumlah pesan** yang terupdate otomatis
+- Jika belum ada pesan, tampil *empty state* dengan 🦀 dan teks "Be the first to say something!"
+- Username pengirim pesan ditampilkan dengan warna **oranye** agar mudah dibedakan
+
+#### ⌨️ Fitur Baru: Enter to Send
+
+Fitur paling fungsional yang ditambahkan adalah **Enter to send**. Di Yew 0.19, ini diimplementasikan menggunakan `batch_callback` pada event `onkeypress`:
+
+```rust
+let onkeypress = ctx.link().batch_callback(|e: KeyboardEvent| {
+    if e.key() == "Enter" {
+        Some(Msg::SubmitMessage)
+    } else {
+        None
+    }
+});
+```
+
+`batch_callback` digunakan karena callback perlu mengembalikan `Option<Msg>` — jika `None`, tidak ada pesan yang dikirim ke komponen. Ini lebih efisien daripada selalu trigger `update()` untuk setiap ketukan keyboard. Fitur ini membuat pengalaman chat terasa lebih natural.
+
+#### 🛡️ Guard: Empty Message
+
+Ditambahkan pengecekan di `update()` agar pesan kosong atau whitespace tidak dikirim ke server:
+
+```rust
+let val = input.value();
+if val.trim().is_empty() {
+    return false;
+}
+```
+
+#### 💭 Kenapa warna oranye?
+
+Warna oranye (#f97316 / `orange-500`) bukan pilihan acak — ini adalah warna resmi komunitas Rust. Logo Rust, situs resmi rust-lang.org, dan merchandise Rust semuanya menggunakan oranye sebagai warna utama. Menggunakannya di sini memberikan *identity* yang kohesif: siapapun yang familiar dengan Rust akan langsung merasa *at home*.
