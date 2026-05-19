@@ -150,3 +150,120 @@ if val.trim().is_empty() {
 #### 💭 Kenapa warna oranye?
 
 Warna oranye (#f97316 / `orange-500`) bukan pilihan acak — ini adalah warna resmi komunitas Rust. Logo Rust, situs resmi rust-lang.org, dan merchandise Rust semuanya menggunakan oranye sebagai warna utama. Menggunakannya di sini memberikan *identity* yang kohesif: siapapun yang familiar dengan Rust akan langsung merasa *at home*.
+
+---
+
+## Bonus: Rust WebSocket Server for YewChat!
+
+**Server running (Rust):**
+
+![Rust Server for YewChat](assets/YCserver.png)
+
+**YewChat connected to Rust server:**
+
+![YewChat with Rust server](assets/YCrust.png)
+
+### Latar belakang tantangan
+
+Server asli yang dipakai tutorial YewChat ditulis dalam **JavaScript** (Node.js). Tutorial 2 sudah memiliki server WebSocket yang ditulis dalam **Rust** menggunakan `tokio` + `tokio-websockets`, namun server tersebut hanya meneruskan teks mentah dengan prefix alamat IP — tidak memahami protokol JSON yang digunakan YewChat.
+
+Tantangannya: dapatkah server Rust dari Tutorial 2 dimodifikasi agar bisa melayani YewChat dari Tutorial 3?
+
+### Apa yang berbeda antara kedua server?
+
+| Aspek | Tutorial 2 (`server.rs`) | YewChat (`yewchat_server.rs`) |
+|-------|--------------------------|-------------------------------|
+| Format pesan | Teks bebas: `"127.0.0.1:49838: halo"` | JSON terstruktur: `{"messageType":"message","data":"..."}` |
+| Identifikasi pengirim | Alamat IP:port dari TCP | Username yang didaftarkan via pesan `register` |
+| Manajemen user | Tidak ada — hanya broadcast raw | `HashMap<SocketAddr, String>` terbungkus `Arc<Mutex>` |
+| Saat disconnect | Tidak ada notifikasi | Broadcast daftar user terbaru ke semua client |
+| Tipe pesan | Satu jenis (semua di-broadcast) | Tiga jenis: `register`, `message`, `users` |
+
+### Bagaimana modifikasinya?
+
+Server baru dibuat di [`src/bin/yewchat_server.rs`](src/bin/yewchat_server.rs). Infrastruktur TCP dan async dari Tutorial 2 dipertahankan sepenuhnya — `TcpListener`, `tokio::spawn`, `broadcast::channel`, dan `tokio::select!` semuanya identik. Yang berubah adalah **apa yang dilakukan server setelah menerima pesan**.
+
+**Langkah 1 — Tambahkan struct serde yang *mirror* client:**
+
+```rust
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum MsgTypes { Users, Register, Message }
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebSocketMessage {
+    message_type: MsgTypes,
+    data_array: Option<Vec<String>>,
+    data: Option<String>,
+}
+```
+
+Struct ini identik dengan yang ada di `chat.rs` client. Karena JSON hanyalah teks yang di-*serialize*, selama kedua sisi setuju pada struktur yang sama, komunikasi berjalan mulus tanpa perubahan protokol transport.
+
+**Langkah 2 — Tambahkan registri user:**
+
+```rust
+type Users = Arc<Mutex<HashMap<SocketAddr, String>>>;
+```
+
+`Arc` memungkinkan registri dibagi antar semua task async tanpa copy, `Mutex` menjamin tidak ada *data race* saat dua koneksi masuk bersamaan. Setiap `SocketAddr` dipetakan ke username yang didaftarkan.
+
+**Langkah 3 — Handle tiga jenis pesan:**
+
+Ketika pesan `register` masuk, server menyimpan username dan langsung broadcast daftar semua user yang terhubung:
+
+```rust
+MsgTypes::Register => {
+    username = name;
+    users.lock().unwrap().insert(addr, username.clone());
+    let user_list: Vec<String> = users.lock().unwrap().values().cloned().collect();
+    let response = WebSocketMessage {
+        message_type: MsgTypes::Users,
+        data_array: Some(user_list),
+        data: None,
+    };
+    bcast_tx.send(serde_json::to_string(&response)?)?;
+}
+```
+
+Ketika pesan `message` masuk, server membungkus teks dengan nama pengirim dan broadcast ke semua:
+
+```rust
+MsgTypes::Message => {
+    let msg_data = MessageData { from: username.clone(), message: text };
+    let response = WebSocketMessage {
+        message_type: MsgTypes::Message,
+        data: Some(serde_json::to_string(&msg_data)?),
+        data_array: None,
+    };
+    bcast_tx.send(serde_json::to_string(&response)?)?;
+}
+```
+
+**Langkah 4 — Cleanup saat disconnect:**
+
+```rust
+users.lock().unwrap().remove(&addr);
+// broadcast users list yang sudah dikurangi
+```
+
+### Mengapa ini berhasil?
+
+Kunci keberhasilannya adalah memahami bahwa **WebSocket pada dasarnya hanyalah transport teks**. YewChat client mengirim JSON sebagai string teks biasa, dan server hanya perlu tahu cara mem-*parse* string itu. Karena `tokio-websockets` sudah menangani framing WebSocket, perubahan yang diperlukan hanya di lapisan aplikasi — bagaimana server menginterpretasikan isi teks yang diterima.
+
+`serde_json::from_str()` dan `serde_json::to_string()` menjembatani dua dunia: string teks yang melewati WebSocket di satu sisi, dan struct Rust yang ter-*type-check* di sisi lain. Selama format JSON antara client dan server konsisten (diatur oleh annotation `#[serde(rename_all = "camelCase")]` dan `#[serde(rename_all = "lowercase")]`), tidak ada yang perlu diubah di layer transport sama sekali.
+
+### Mana yang lebih saya sukai: JavaScript atau Rust?
+
+**Saya lebih memilih server Rust**, dan berikut alasannya:
+
+**1. Type safety end-to-end.** Di server JavaScript, tipe pesan yang diterima adalah `any` — compiler tidak bisa menangkap kesalahan format JSON di *compile time*. Di Rust, jika client mengirim JSON dengan field yang salah, `serde_json::from_str()` gagal dengan error yang bisa di-*handle* secara eksplisit. Tidak ada kejutan di runtime.
+
+**2. Concurrency yang jelas.** JavaScript server bisa saja menggunakan shared mutable state dengan tidak aman karena Node.js single-threaded. Di Rust, `Arc<Mutex<HashMap>>` memaksa programmer berpikir tentang thread safety — dan *compiler* yang memastikannya, bukan disiplin programmer.
+
+**3. Performa.** Rust tidak memiliki garbage collector. Server Rust bisa melayani ribuan koneksi concurrent dengan latensi yang lebih konsisten karena tidak ada GC pause. Untuk aplikasi chat real-time, latensi yang konsisten lebih penting daripada throughput puncak.
+
+**4. Satu bahasa untuk segalanya.** Dengan Rust di server dan Yew (Rust) di client, seluruh stack menggunakan satu bahasa. Struct `WebSocketMessage` yang sama bisa secara teori di-*share* sebagai library. Di ekosistem JS, client TypeScript dan server JS masih dua ekosistem berbeda dengan tooling berbeda.
+
+**Kekurangan Rust:** waktu kompilasi lebih lama, dan kurva belajar jauh lebih curam. Untuk prototipe cepat atau tim yang sudah mahir JavaScript, server JS tetap pilihan yang sangat praktis. Namun untuk sistem produksi yang mengutamakan keandalan dan keamanan — Rust adalah pilihan yang tepat.
