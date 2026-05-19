@@ -49,3 +49,23 @@ Ketika server dijalankan, ia mengikat TCP listener di `127.0.0.1:2000` dan membu
 ### Penjelasan
 
 Karena aplikasi ini berbasis koneksi client-server, mengubah port berarti harus mengubah di dua tempat sekaligus agar keduanya tetap sepakat. Di sisi server, port didefinisikan di [src/bin/server.rs](src/bin/server.rs) pada baris `TcpListener::bind("127.0.0.1:2000")`, yaitu alamat TCP yang didengarkan server untuk menerima koneksi masuk. Di sisi client, port didefinisikan di [src/bin/client.rs](src/bin/client.rs) pada baris `ClientBuilder::from_uri(Uri::from_static("ws://127.0.0.1:2000"))`, yaitu URI tujuan koneksi yang dibentuk client saat mencoba terhubung ke server. Keduanya diubah dari port `2000` menjadi `8080`. Perlu diperhatikan bahwa URI di client menggunakan skema `ws://`, yang merupakan protokol WebSocket, dan ini sudah sesuai dengan server yang menggunakan `tokio-websockets` dengan `ServerBuilder::new().accept(socket)` untuk melakukan WebSocket handshake di atas koneksi TCP biasa. Jadi protokol yang digunakan adalah WebSocket (layer aplikasi) di atas TCP (layer transport), dan kedua sisi harus menggunakan port yang sama agar koneksi berhasil terbentuk. Setelah perubahan port dilakukan di kedua file, aplikasi tetap berjalan normal persis seperti sebelumnya.
+
+---
+
+## Experiment 2.3: Small changes — adding sender information
+
+**Server:**
+
+![Server after change](assets/serverchange.png)
+
+**Client 1:**
+
+![Client 1 after change](assets/clientchange1.png)
+
+**Client 2:**
+
+![Client 2 after change](assets/clientchange2.png)
+
+### Penjelasan
+
+Modifikasi dilakukan di dua tempat. Pertama, di [src/bin/server.rs](src/bin/server.rs), ketika server menerima pesan dari client, sebelum disiarkan ke semua client lain, teks pesan dibungkus dengan informasi alamat pengirim menggunakan `format!("{addr}: {text}")` sehingga broadcast yang dikirim ke seluruh subscriber sudah berisi IP dan port si pengirim. Selain itu, server juga mencetak log `println!("From client {addr} \"{text}\"")` di terminalnya sendiri agar mudah melacak siapa yang mengirim apa. Kedua, di [src/bin/client.rs](src/bin/client.rs), format tampilan pesan yang diterima dari server diubah dari `"From server: {text}"` menjadi `"Fathir's Komputer - From server: {text}"`, sehingga setiap pesan yang muncul di terminal client sudah mencantumkan nama komputer pemilik client tersebut diikuti isi pesan yang sudah mengandung IP:port pengirim aslinya dari server. Hasilnya, setiap kali ada client yang mengetik pesan, semua client lain akan melihat tampilan seperti `Fathir's Komputer - From server: 127.0.0.1:49838: halo`, di mana `127.0.0.1:49838` adalah identitas koneksi TCP si pengirim yang diambil server dari parameter `addr` pada fungsi `handle_connection`. Ini penting karena tanpa informasi sender, semua pesan terlihat anonim dan tidak bisa dibedakan siapa yang mengirim apa dalam sesi chat dengan banyak client.

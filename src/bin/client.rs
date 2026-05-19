@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 match incoming {
                     Some(Ok(msg)) => {
                         if let Some(text) = msg.as_text() {
-                            println!("From server: {}", text);
+                            println!("Fathir's Komputer - Message from server: {}", text);
                         }
                     }
                     Some(Err(err)) => return Err(err.into()),
