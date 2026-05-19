@@ -69,3 +69,19 @@ Karena aplikasi ini berbasis koneksi client-server, mengubah port berarti harus 
 ### Penjelasan
 
 Modifikasi dilakukan di dua tempat. Pertama, di [src/bin/server.rs](src/bin/server.rs), ketika server menerima pesan dari client, sebelum disiarkan ke semua client lain, teks pesan dibungkus dengan informasi alamat pengirim menggunakan `format!("{addr}: {text}")` sehingga broadcast yang dikirim ke seluruh subscriber sudah berisi IP dan port si pengirim. Selain itu, server juga mencetak log `println!("From client {addr} \"{text}\"")` di terminalnya sendiri agar mudah melacak siapa yang mengirim apa. Kedua, di [src/bin/client.rs](src/bin/client.rs), format tampilan pesan yang diterima dari server diubah dari `"From server: {text}"` menjadi `"Fathir's Komputer - From server: {text}"`, sehingga setiap pesan yang muncul di terminal client sudah mencantumkan nama komputer pemilik client tersebut diikuti isi pesan yang sudah mengandung IP:port pengirim aslinya dari server. Hasilnya, setiap kali ada client yang mengetik pesan, semua client lain akan melihat tampilan seperti `Fathir's Komputer - From server: 127.0.0.1:49838: halo`, di mana `127.0.0.1:49838` adalah identitas koneksi TCP si pengirim yang diambil server dari parameter `addr` pada fungsi `handle_connection`. Ini penting karena tanpa informasi sender, semua pesan terlihat anonim dan tidak bisa dibedakan siapa yang mengirim apa dalam sesi chat dengan banyak client.
+
+---
+
+## Experiment 3.1: Original code
+
+**Login Page:**
+
+![YewChat Login](assets/YClogin.png)
+
+**Chat Page:**
+
+![YewChat Chat](assets/YCchat.png)
+
+### Penjelasan
+
+YewChat adalah aplikasi chat berbasis WebAssembly yang dibangun menggunakan framework Yew di Rust. Aplikasi ini terdiri dari dua komponen utama: halaman Login dan halaman Chat. Pada halaman Login, pengguna mengetikkan username (minimal 2 karakter) lalu menekan tombol Connect yang akan menyimpan username ke dalam global Context bertipe `Rc<UserInner>` menggunakan `RefCell` untuk interior mutability, kemudian me-route browser ke halaman Chat melalui `yew-router`. Di halaman Chat, komponen `Chat` langsung menginisialisasi `WebsocketService` yang membuka koneksi WebSocket ke `ws://127.0.0.1:8080` dan mengirim pesan registrasi berformat JSON `{"messageType":"register","data":"username"}` ke server. Komunikasi antara `WebsocketService` dan komponen `Chat` menggunakan dua mekanisme berbeda: pesan dari komponen ke server dikirim melalui MPSC channel (`futures::channel::mpsc`), sedangkan pesan dari server ke komponen diteruskan melalui `EventBus` yang merupakan Yew Agent berbasis `yew_agent`. Ketika server membalas dengan daftar pengguna bertipe `{"messageType":"users","dataArray":[...]}`, komponen memperbarui daftar user di panel kiri beserta avatar yang di-generate dari DiceBear API. Pesan chat dikirim sebagai JSON `{"messageType":"message","data":"teks"}` dan ditampilkan di panel tengah lengkap dengan avatar dan nama pengirim.
